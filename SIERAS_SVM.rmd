@@ -1,0 +1,172 @@
+---
+title: "Model 1 Support Vector Machine"
+author: "Noel C. Sieras"
+date: "2022-12-16"
+output:
+  pdf_document: default
+  html_document: default
+---
+\
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'D:/FilesWorkOn&Saved/PhDStat/@MSUIIT/SY20222023/01FirstSemester/STT225_StatisticalComputing1/04FinalProject/02Dataset')
+```
+\
+## Packages
+```{r, echo=FALSE}
+# Helper packages
+library(dplyr)    # for data wrangling
+library(ggplot2)  # for awesome graphics
+library(rsample)  # for data splitting
+library(readr)    #load dataset
+
+# Modeling packages
+library(caret)    # for classification and regression training
+library(kernlab)  # for fitting SVMs
+library(modeldata) #for Failure.binary data
+library(forcats)
+library(pdp)      # for partial dependence plots, etc.
+library(vip)      # for variable importance plots
+```
+\
+# MODEL 1 SVM
+
+   Support Vector Machine (SVM) is a supervised learning technique that analyzes data and isolates patterns applicable to both classification and regression. The classifier is useful for choosing between two or more possible outcomes that depend on continuous or categorical predictor variables. Based on training and sample classification data, the SVM algorithm assigns the target data into any one of the given categories. The data is represented as points in space and categories are mapped in both linear and non-linear ways.
+\
+# LOADING OF REPROCESSED DATASET
+
+We used the reprocessed data of radiomics_complete.csv (*normalRad.csv*) in performing support vectore machine.
+
+Radiomics Dataset 197 Rows (Observations) of 431 Columns (Variables)
+Failure.binary: binary property to predict
+\
+## Normalized Dataset
+```{r}
+
+radiomicsdat<- read_csv("normalRad.csv")
+#View(radiomicsdt)
+head(radiomicsdat)
+
+# Load Failure.binary data
+
+radiomicsdat$Failure.binary=as.factor(radiomicsdat$Failure.binary)
+```
+\
+# Create training (80%) and test (20%) sets
+```{r}
+set.seed(123)  # for reproducibility
+
+churn_split <- initial_split(radiomicsdat, prop = 0.8, strata = "Failure.binary")
+split_train <- training(churn_split)
+split_test  <- testing(churn_split)
+```
+\
+## Classifiers
+```{r}
+# Linear (i.e., soft margin classifier)
+caret::getModelInfo("svmLinear")$svmLinear$parameters
+
+# Polynomial kernel
+caret::getModelInfo("svmPoly")$svmPoly$parameters
+
+# Radial basis kernel
+caret::getModelInfo("svmRadial")$svmRadial$parameters
+```
+\
+## Run SVM Model in the Training phase
+Using **split_train**, we can tune an SVM model with radial basis kernel.
+```{r}
+set.seed(1854)  # for reproducibility
+split_svm <- train(
+  Failure.binary ~ ., 
+  data = split_train,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+```
+\
+## Plot and print SVM model with with radial basis kernel.
+```{r}
+# Plot results
+ggplot(split_svm) + theme_light()
+
+# Print results
+split_svm$results
+```
+The accuracy of the model is **80.19%**
+\
+## Control and train of parameters
+```{r}
+class.weights = c("No" = 1, "Yes" = 10)
+
+# Control params for SVM
+ctrl <- trainControl(
+  method = "cv", 
+  number = 10, 
+  classProbs = TRUE,                 
+  summaryFunction = twoClassSummary  # also needed for AUC/ROC
+)
+
+split_train$Failure.binary=fct_recode(split_train$Failure.binary,No="0",Yes="1")
+
+```
+
+# Print the AUC values during Training
+```{r}
+# Tune an SVM
+set.seed(5628)  # for reproducibility
+train_svm_auc <- train(
+  Failure.binary ~ ., 
+  data = split_train,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  metric = "ROC",  # area under ROC curve (AUC)       
+  trControl = ctrl,
+  tuneLength = 10
+)
+
+# Print results
+train_svm_auc$results
+confusionMatrix(train_svm_auc)
+```
+On the average, the accuracy of the model is **83.44%**.
+\
+## Print the Top 20 important features during Training
+```{r}
+prob_yes <- function(object, newdata) {
+  predict(object, newdata = newdata, type = "prob")[, "Yes"]
+}
+
+# Variable importance plot
+set.seed(2827)  # for reproducibility
+vip(train_svm_auc, method = "permute", nsim = 20, train = split_train, 
+    target = "Failure.binary", metric = "auc", reference_class = "Yes", 
+    pred_wrapper = prob_yes)
+```
+\
+## Print the AUC values during Testing
+\
+```{r}
+split_test$Failure.binary=fct_recode(split_test$Failure.binary,No="0",Yes="1")
+
+# Tune an SVM with radial 
+set.seed(5628)  # for reproducibility
+test_svm_auc <- train(
+  Failure.binary ~ ., 
+  data = split_test,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  metric = "ROC",  # area under ROC curve (AUC)       
+  trControl = ctrl,
+  tuneLength = 10
+)
+
+# Print results
+test_svm_auc$results
+confusionMatrix(test_svm_auc)
+```
+On the average, the accuracy of the model using the testing data is **62.5%**.
+
+
