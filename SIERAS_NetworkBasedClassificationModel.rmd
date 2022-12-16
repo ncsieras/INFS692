@@ -1,0 +1,165 @@
+---
+title: "Model 2 Network-based Classification Model"
+author: "Noel C. Sieras"
+date: "2022-12-16"
+output:
+  pdf_document: default
+---
+\
+## Preliminaries
+This will prevent some errors in loading some of the chunks and laoding of the dataset. 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'D:/FilesWorkOn&Saved/PhDStat/@MSUIIT/SY20222023/01FirstSemester/STT225_StatisticalComputing1/04FinalProject/02Dataset')
+```
+\
+# Network-based Classification Model
+\
+## Load Helper Packages
+```{r, echo=FALSE}
+library(dplyr)       # for data manipulation
+library(ggplot2)     # for data visualization
+library(stringr)     # for string functionality
+library(gridExtra)   # for manipulating the grid
+library(bestNormalize)
+library(tidyverse)   # data manipulation
+library(cluster)     # for general clustering algorithms
+library(factoextra)  # for visualizing cluster results
+library(mclust)      # for fitting clustering algorithms
+
+# Helper packages
+library(doParallel)  # for parallel backend to foreach
+library(foreach)     # for parallel processing with for loops
+library(rsample)
+# Modeling packages
+library(caret)       # for general model fitting
+library(rpart)       # for fitting decision trees
+library(ipred)       # for fitting bagged decision trees
+library(ROCR)
+library(pROC)
+library(readr)
+library(keras)         # for fitting DNNs
+library(tfruns)        # for additional grid search & model training functions
+library(tensorflow)
+library(tfestimators)  # provides grid search & model training interface
+library(rsample) 
+library(tidyverse)
+library(bestNormalize)
+```
+\
+# Loading of Data Set
+\
+Radiomics data contains 197 rows and 431 columns: 
+**Failure.binary**: binary property to predict
+\
+## Use `set.seed()` for reproducibility
+```{r}
+# for reproducibility
+set.seed(12345)  
+```
+\
+## Setting up a working directory
+```{r, echo=FALSE}
+setwd("D:/FilesWorkOn&Saved/PhDStat/@MSUIIT/SY20222023/01FirstSemester/STT225_StatisticalComputing1/04FinalProject/02Dataset")
+```
+\
+## **Importing the normalized dataset normalRAd.csv**
+The dataset used in this model is a normalized data `normalRad.csv` which was obtain from `radiomics_complete.csv` through pre-processing technuque. It has 197 observations and 431 variables.
+```{r}
+datard <- read_csv("normalRad.csv", show_col_types = FALSE)
+dim(datard)
+```
+## Splitting
+
+Split the data into training (80%) and testing (30%). 
+
+```{r}
+datard_n<-datard %>%
+  mutate(Failure.binary=ifelse(Failure.binary== "No",0,1))
+
+set.seed(123)
+rdsplit = initial_split(datard_n, prop = 0.8, strata = "Failure.binary")
+rdtrain <- training(rdsplit)
+rdtest  <- testing(rdsplit)
+
+train1 <- rdtrain[,-c(1,2)]%>%as.matrix.data.frame()
+train2 <- rdtrain$Failure.binary
+test1 <- rdtest[,-c(1,2)]%>%as.matrix.data.frame()
+test2 <- rdtest$Failure.binary
+```
+
+## Reshaping the dataset
+```{r, warning=FALSE}
+train1 <- array_reshape(train1, c(nrow(train1), ncol(train1)))
+train1 <- train1 
+
+test1 <- array_reshape(test1, c(nrow(test1), ncol(test1)))
+test1 <- test1 
+
+train2 <- to_categorical(train2, num_classes = 2)
+test2 <- to_categorical(test2, num_classes = 2)
+```
+
+## Run the model
+
+```{r, warning=FALSE}
+modeldl <- keras_model_sequential() %>%
+  
+   # Network architecture
+  layer_dense(units = 256, activation = "sigmoid", input_shape = c(ncol(train1))) %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_dense(units = 128, activation = "sigmoid") %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_dense(units = 128, activation = "sigmoid") %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_dense(units = 64, activation = "sigmoid") %>% 
+  layer_dropout(rate = 0.25) %>%
+  layer_dense(units = 64, activation = "sigmoid") %>% 
+  layer_dropout(rate = 0.25) %>%
+  layer_dense(units = 2, activation = "softmax") %>% 
+
+# Backpropagation
+ compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_rmsprop(),
+    metrics = c("accuracy")
+  )
+modeldl
+```
+
+## Trained the model
+
+```{r}
+#trained model history
+fitdl <- modeldl %>% 
+  fit(train1, train2, 
+      epochs = 10, 
+      batch_size = 128, 
+      validation_split = 0.15)
+
+# Display output
+fitdl
+
+#plot the training and validation performance over 10 epochs
+plot(fitdl)
+```
+
+
+## Evaluate the trained model  using testing dataset 
+
+
+```{r}
+modeldl %>%
+  evaluate(test1, test2)
+dim(test1)
+dim(test2)
+```
+
+## Model prediction using testing dataset
+
+```{r}
+modeldl %>% 
+  predict(test1) %>% `>`(0.5) %>% k_cast("int32")
+```
+
+
