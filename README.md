@@ -13,6 +13,9 @@ and classification algorithms.
 ## Random Forest 
 Random forest is used for classifying and predicting the binary.failure od the radiomics dataset.
 
+## Support Vector Machine (SVM)
+Support Vector Machine (SVM) is a supervised learning technique that analyzes data and isolates patterns applicable to both classification and regression. The classifier is useful for choosing between two or more possible outcomes that depend on continuous or categorical predictor variables. Based on training and sample classification data, the SVM algorithm assigns the target data into any one of the given categories. The data is represented as points in space and categories are mapped in both linear and non-linear ways.
+
 # Model 2 Network-based Classification Model 
 A network-based classification model was in classifying the binary.failure.
 
