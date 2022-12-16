@@ -1,0 +1,213 @@
+---
+title: "Model 1 Ensemble Classiication Model (Bagging)"
+author: "Noel C. Sieras"
+date: '2022-12-16'
+output: pdf_document
+---
+\
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'D:/FilesWorkOn&Saved/PhDStat/@MSUIIT/SY20222023/01FirstSemester/STT225_StatisticalComputing1/04FinalProject/02Dataset')
+```
+\
+# Bagging
+**Bagging** is also known as *bootstrap aggregating * prediction models, is a general method for fitting multiple versions of a prediction model and then combining (or ensembling) them into an aggregated prediction and is designed to improve the stability and accuracy of regression and classification algorithms.
+\
+## Packages used for these enseble classification model
+```{r}
+# Helper packages
+library(dplyr)       # for data wrangling
+library(ggplot2)     # for awesome plotting
+library(doParallel)  # for parallel backend to foreach
+library(foreach)     # for parallel processing with for loops
+library(rsample)
+library(tidyverse)
+# Modeling packages
+library(caret)       # for general model fitting
+library(rpart)       # for fitting decision trees
+library(ipred)       # for fitting bagged decision trees
+library(ROCR)
+library(pROC)
+```
+
+## Use `set.seed()` for reproducibility
+```{r}
+# for reproducibility
+set.seed(12345)  
+```
+\
+## Data splitting of normalized data into 80% training data and 20% testing data
+\
+The normalized data `datRD` is split into 80% for training data and 20% for testing data.
+```{r}
+#80% training data - 20% testing data
+library(readr)
+library(rsample)
+library(caret)
+setwd("D:/FilesWorkOn&Saved/PhDStat/@MSUIIT/SY20222023/01FirstSemester/STT225_StatisticalComputing1/04FinalProject/02Dataset")
+datRD <- read_csv("normalRad.csv", show_col_types = FALSE)
+rdsplit <- initial_split(datRD, prop = 0.8, strata = "Failure.binary")
+rdsplit
+rdtrain <- training(rdsplit)
+rdtest  <- testing(rdsplit)
+```
+\
+## Training a Model  
+\
+In `bagging()` function, we use `nbagg()` to control how many iterations to include in the bagged model and the `coob = TRUE` to indicate the use of the **Out Of Bag (oob)** error rate. The **oob** is used to estimate the prediction error. The size of the trees can be controlled by `control` arguments, it is an options that control details of the rpart algorithm. The chunks below uses `nbagg = 50`.
+```{r}
+# train bagged model
+bagging_1 <- bagging(
+  formula = Failure.binary ~ .,
+  data = rdtrain,
+  nbagg = 100,  
+  coob = TRUE,
+  control = rpart.control(minsplit = 2, cp = 0)
+)
+
+bagging_1
+```
+Based on the results, the oob of RMSE is 0.2777.
+\
+## Bagging and Cross-validation (cv)
+We can also apply bagging within caret and use 10-fold CV to see how well our ensemble will generalize.
+```{r, warning=FALSE}
+#train using caret
+bagging_2 <- train(
+  Failure.binary ~ .,
+  data = rdtrain,
+  method = "treebag",
+  trControl = trainControl(method = "cv", number = 10),
+  nbagg = 100,  
+  control = rpart.control(minsplit = 2, cp = 0)
+)
+
+bagging_2
+```
+The result shows that the RMSE value is 0.2784 which is almost similar to the OOB estimate with 0.2777.
+\
+## Parellelizing the bagging algorithm
+The following chunks illustrates parallelizing the bagging algorithm (with b = 100 decision trees) on the radiomics data using eight clusters.
+```{r}
+# Create a parallel socket cluster
+cl <- makeCluster(8)
+
+registerDoParallel(cl) # register the parallel backend
+
+# Fit trees in parallel and compute predictions on the test set
+predictions <- foreach(
+  icount(100), 
+  .packages = "rpart", 
+  .combine = cbind
+) %dopar% {
+  # bootstrap copy of training data
+  index <- sample(nrow(rdtrain), replace = TRUE)
+  boot <- rdtrain[index, ]
+
+# fit tree to bootstrap copy
+  bagged_tree <- rpart(
+    Failure.binary ~ ., 
+    control = rpart.control(minsplit = 2, cp = 0),
+    data = boot
+  ) 
+  
+  predict(bagged_tree, newdata = rdtest)
+}
+
+predictions[1:5, 1:7]
+```
+
+## Predictions
+To return the prediction for the test data for each of the trees. 
+```{r}
+predictions %>%
+  as.data.frame() %>%
+  mutate(
+    observation = 1:n(),
+    actual = rdtest$Failure.binary) %>%
+  tidyr::gather(tree, predicted, -c(observation, actual)) %>%
+  group_by(observation) %>%
+  mutate(tree = stringr::str_extract(tree, '\\d+') %>% as.numeric()) %>%
+  ungroup() %>%
+  arrange(observation, tree) %>%
+  group_by(observation) %>%
+  mutate(avg_prediction = cummean(predicted)) %>%
+  group_by(tree) %>%
+  summarize(RMSE = RMSE(avg_prediction, actual)) %>%
+  ggplot(aes(tree, RMSE)) +
+  geom_line() +
+  xlab('Number of trees')
+```
+\
+## Shutdown the parallel processing
+```{r}
+# Shutdown parallel cluster
+stopCluster(cl)
+```
+\
+## Partial Dependence Plots
+PDPs or partial dependence plots tell us visually how each feature influences the predicted output, on average. PDPs help us to interpret any “black box” model.
+```{r}
+# Construct partial dependence plots
+p1 <- pdp::partial(
+  bagging_2, 
+  pred.var = names(datRD)[3],
+  grid.resolution = 20
+) %>% 
+  autoplot()
+```
+\
+```{r}
+p2 <- pdp::partial(
+  bagging_2, 
+  pred.var = names(datRD)[4], 
+  grid.resolution = 20
+) %>% 
+  autoplot()
+```
+\
+```{r}
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+
+```
+\
+## Prediction using training data 
+To predict using training data of `bagging_2` model, we use the `predict()` function
+```{r}
+# Use the predict function to predict using training data
+pred_train <- predict(bagging_2, rdtrain)
+summary(pred_train)
+```
+\
+## Plotting using training data and printing of AUC values  
+To plot the training data and print the AUc values, we use the function `roc()`.
+```{r}
+# Plot the training data performance while print the AUC values
+roc(rdtrain$Failure.binary ~ pred_train, plot=TRUE, legacy.axes=FALSE, 
+    percent=TRUE, col="blue", lwd=2, print.auc=TRUE)
+
+```
+\
+## Prediction using teting data 
+To predict using testing data of ``bagging_2` model, we again use the `predict()` function.
+```{r}
+# Use the predict function to predict using testing data
+pred_test <- predict(bagging_2, rdtest)
+summary(pred_test)
+```
+\
+## Plotting using testing data and printing of AUC values
+To plot the testing data and print the AUC values, we use the function `roc()`.
+```{r}
+# Plot the testing data performance while print the AUC values
+roc(rdtest$Failure.binary ~ pred_test, plot=TRUE, legacy.axes=FALSE, 
+    percent=TRUE, col="blue", lwd=2, print.auc=TRUE)
+
+```
+\
+## Plotting of the Important Variable
+we use `vip()` to construct a variable importance plot (VIP) of the top 20 features in the `bagging_2` model.
+```{r}
+library(vip)
+vip(bagging_2, num_features = 20)
+```
