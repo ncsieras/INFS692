@@ -17,4 +17,4 @@ Random forest is used for classifying and predicting the binary.failure od the r
 A network-based classification model was in classifying the binary.failure.
 
 # Model 3 Cluster Techniques
-
+K Means, hierarchical, and model-based clustering are used in clustering the radiomics dataset.
