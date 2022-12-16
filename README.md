@@ -10,6 +10,8 @@ Bagging is also known as *bootstrap aggregating * prediction models, is a genera
 and then combining (or ensembling) them into an aggregated prediction and is designed to improve the stability and accuracy of regression 
 and classification algorithms.
 
+## Random Forest 
+Random forest is used for classifying and predicting the binary.failure od the radiomics dataset.
 
 # Model 2 Network-based Classification Model 
 A network-based classification model was in classifying the binary.failure.
