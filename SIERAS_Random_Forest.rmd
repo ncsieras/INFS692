@@ -1,0 +1,387 @@
+---
+title: "Model 1 Ensemble Classification Model (RANDOM FOREST)"
+author: "Noel C. Sieras"
+date: "2022-16-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+\
+# Preliminaries
+To avoid errors in laoding the dataset
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'D:/FilesWorkOn&Saved/PhDStat/@MSUIIT/SY20222023/01FirstSemester/STT225_StatisticalComputing1/04FinalProject/02Dataset')
+```
+
+# Load Packages
+
+```{r, echo=FALSE}
+# Helper packages
+library(readr)    # loading dataset
+library(dplyr)    # for data wrangling
+library(ggplot2)  # for awesome graphics
+library(tidyverse)# for filtering 
+library(rsample)  # for creating validation splits
+library(bestNormalize) # for normalizing the dataset
+library(stringr)       # for string functionality
+library(gridExtra)     # for manipulaiting the grid
+
+# Modeling packages
+library(cluster)       # for general clustering algorithms
+library(factoextra)    # for visualizing cluster results
+library(ranger)     # a c++ implementation of random forest 
+library(h2o)        # a java-based implementation of random forest
+h2o.init()
+```
+
+# Pre-processing of Data
+\
+## Importing of Dataset 
+```{r}
+radiomicsdf<- read_csv("radiomics_completedata.csv")
+#View(radiomicsdf)
+head(radiomicsdf)
+```
+
+# Checking for NULL and missing values
+The result for checking null and missing values is 0 using *sum(is.n())*. Thus, there is no null and missing values
+```{r}
+sum(is.na(radiomicsdf))
+```
+## Checking of Normality for the given dataset
+```{r,warning=F}
+radiomicsdfs=radiomicsdf%>%select_if(is.numeric)
+radiomicsdfs=radiomicsdfs[,-c(1,2)]
+radiomicsdf2=apply(radiomicsdfs,2,function(x){ks.test(x,"pnorm")})
+```
+
+## Convert a list to vector
+To have the list of p-value of all variables, the *unlist()* function is used and convert a list to vector.
+```{r}
+KS_list=unlist(lapply(radiomicsdf2, function(x) x$p.value))
+```
+
+## Checking for normality and non-normality of the given dataset
+```{r}
+sum(KS_list<0.05) # not normally distributed
+
+sum(KS_list>0.05) # normally distributed
+```
+# [1] 428
+# [1] 1
+
+#  Thus, we have 428 variables that are not normally distributed and Entropy_cooc.W.ADC is normally distributed.
+
+## Checking of variable with a maximum value
+```{r}
+which.max(KS_list)
+```
+
+# CHECKING FOR THEN NORMALITY OF THE DATA
+Check for normality, if not, normalized the data.
+Note that we used *Shapiro-Wilk's Test* to check the normality of the dataset
+```{r,warning=F}
+temdt=radiomicsdf[,c(3,5:length(names(radiomicsdf)))]
+
+temdt=apply(temdt,2,orderNorm)
+temdt=lapply(temdt, function(x) x$x.t)
+temdt=temdt%>%as.data.frame()
+test=apply(temdt,2,shapiro.test)
+test=unlist(lapply(test, function(x) x$p.value))
+```
+
+```{r,warning=F}
+sum(test>0.05) # not normally distributed
+```
+
+
+```{r,warning=F}
+sum(test<0.05) # not normally distributed
+```
+
+#[1] 0
+#[1] 428
+
+# Thus, base on the result above our data is normally distributed.
+\
+## The normalize dataset  
+```{r}
+radiomicsdf[,c(3,5:length(names(radiomicsdf)))]=temdt
+```
+
+## CORRELATION OF THE WHOLE DATASET EXCEPT THE CATEGORICAL VARIABLES
+```{r}
+CorMatrix=cor(radiomicsdf[,-c(1,2)])
+heatmap(CorMatrix,Rowv=NA,Colv=NA,scale="none",revC = T)
+```
+
+# SPLITTING THE DATA INTO TRAINING DATA (80%) AND TESTING DATA (20%)
+
+```{r}
+radiomicsdf$Institution=as.factor(radiomicsdf$Institution)
+radiomicsdf$Failure.binary=as.factor(radiomicsdf$Failure.binary)
+```
+
+```{r}
+splitter <- sample(1:nrow(radiomicsdf), round(nrow(radiomicsdf) * 0.8))
+traindt <- radiomicsdf[splitter, ]
+testdt  <- radiomicsdf[-splitter, ]
+```
+\
+# MODEL 1 RANDOM FOREST
+
+Random Forest in R Programming is an ensemble of decision trees. It builds and combines multiple decision trees to get more accurate predictions. It’s a non-linear classification algorithm
+
+```{r}
+# Helper packages
+library(ROCR)
+library(pROC)
+# Modeling packages
+library(ranger)   # a c++ implementation of random forest 
+library(h2o)      # a java-based implementation of random forest
+h2o.init()
+```
+\
+# LOAD THE REPROCESSED DATASET
+
+Note that we converted the reprocessed dataset into *.csv*. Hence, this dataset we used for the entire project named *normalRad.csv*
+## Splitting of the normalized dataset 
+```{r}
+# make bootstrapping reproducible
+set.seed(123)  # for reproducibility
+
+radiomicsdt<- read_csv("normalRad.csv")
+radiomicsdt$Failure.binary=as.factor(radiomicsdt$Failure.binary)
+
+split <- initial_split(radiomicsdt, strata = "Failure.binary")
+traindt <- training(split)
+testdt <- testing(split)
+
+# number of features
+no.features <- length(setdiff(names(traindt), "Failure.binary"))
+```
+\
+## Training of random forest model
+```{r}
+# train a default random forest model
+randomforest1 <- ranger(
+  Failure.binary ~ ., 
+  data = traindt,
+  mtry = floor(no.features / 3),
+  respect.unordered.factors = "order",
+  seed = 123
+)
+```
+\
+## RMSE and hypergrid grid
+```{r}
+# get OOB RMSE
+(default_rmse <- sqrt(randomforest1$prediction.error))
+
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+  mtry = floor(no.features * c(.05, .15, .25, .333, .4)),
+  min.node.size = c(1, 3, 5, 10), 
+  replace = c(TRUE, FALSE),                               
+  sample.fraction = c(.5, .63, .8),                       
+  rmse = NA                                               
+)
+
+# execute full cartesian grid search
+for(i in seq_len(nrow(hyper_grid))) {
+  # fit model for ith hyperparameter combination
+  fit <- ranger(
+    formula         = Failure.binary ~ ., 
+    data            = traindt, 
+    num.trees       = no.features * 10,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$min.node.size[i],
+    replace         = hyper_grid$replace[i],
+    sample.fraction = hyper_grid$sample.fraction[i],
+    verbose         = FALSE,
+    seed            = 123,
+    respect.unordered.factors = 'order',
+  )
+  # export OOB error 
+  hyper_grid$rmse[i] <- sqrt(fit$prediction.error)
+}
+```
+\
+## Assess top 10 models
+```{r}
+# assess top 10 models
+hyper_grid %>%
+  arrange(rmse) %>%
+  mutate(perc_gain = (default_rmse - rmse) / default_rmse * 100) %>%
+  head(10)
+
+h2o.no_progress()
+h2o.init(max_mem_size = "5g")
+```
+\
+## Converting training dataset to h2o object
+```{r}
+# converting training data to h2o object
+train_h2o <- as.h2o(traindt)
+
+# set the response column to Failure.binary
+response <- "Failure.binary"
+
+# set the predictor names
+predictors <- setdiff(colnames(traindt), response)
+
+h2o_rf1 <- h2o.randomForest(
+  x = predictors, 
+  y = response,
+  training_frame = train_h2o, 
+  ntrees = no.features * 10,
+  seed = 123
+)
+
+h2o_rf1
+```
+\
+## Hyperparameter grid
+```{r}
+# hyperparameter grid
+hyper_grid <- list(
+  mtries = floor(no.features * c(.05, .15, .25, .333, .4)),
+  min_rows = c(1, 3, 5, 10),
+  max_depth = c(10, 20, 30),
+  sample_rate = c(.55, .632, .70, .80)
+)
+
+# random grid search strategy
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "mse",
+  stopping_tolerance = 0.001,   # stop if improvement is < 0.1%
+  stopping_rounds = 10,         # over the last 10 models
+  max_runtime_secs = 60*5      # or stop search after 5 min.
+)
+```
+\
+## Perform grid search
+```{r}
+# perform grid search 
+random_grid <- h2o.grid(
+  algorithm = "randomForest",
+  grid_id = "rf_random_grid",
+  x = predictors, 
+  y = response, 
+  training_frame = train_h2o,
+  hyper_params = hyper_grid,
+  ntrees = no.features * 10,
+  seed = 123,
+  stopping_metric = "RMSE",   
+  stopping_rounds = 10,           # stop if last 10 trees added 
+  stopping_tolerance = 0.005,     # don't improve RMSE by 0.5%
+  search_criteria = search_criteria
+)
+```
+\
+## Collect results and model performance
+```{r}
+# collect the results and sort by our model performance metric 
+# of choice
+random_grid_perf <- h2o.getGrid(
+  grid_id = "rf_random_grid", 
+  sort_by = "mse", 
+  decreasing = FALSE
+)
+random_grid_perf
+```
+\
+## Model with impurity-based variable importance
+```{r}
+# re-run model with impurity-based variable importance
+rf_impurity <- ranger(
+  formula = Failure.binary ~ ., 
+  data = traindt, 
+  num.trees = 2000,
+  mtry = 32,
+  min.node.size = 1,
+  sample.fraction = .80,
+  replace = FALSE,
+  importance = "impurity",
+  respect.unordered.factors = "order",
+  verbose = FALSE,
+  seed  = 123
+)
+```
+\
+## Permutation-based variable importance
+```{r}
+# re-run model with permutation-based variable importance
+rf_permutation <- ranger(
+  formula = Failure.binary ~ ., 
+  data = traindt, 
+  num.trees = 2000,
+  mtry = 32,
+  min.node.size = 1,
+  sample.fraction = .80,
+  replace = FALSE,
+  importance = "permutation",
+  respect.unordered.factors = "order",
+  verbose = FALSE,
+  seed  = 123
+)
+```
+\
+## Plotting of important varriables
+```{r}
+p1 <- vip::vip(rf_impurity, num_features = 25, bar = FALSE)
+p2 <- vip::vip(rf_permutation, num_features = 25, bar = FALSE)
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+
+
+```
+\
+## Compute probabilities and plotting of AUC
+```{r}
+# Compute predicted probabilities on training data
+m1_prob <- predict(h2o_rf1, train_h2o, type = "prob")
+m1_prob=as.data.frame(m1_prob)[,2]
+train_h2o=as.data.frame(train_h2o)
+# Compute AUC metrics for cv_model1,2 and 3 
+perf1 <- prediction(m1_prob,train_h2o$Failure.binary) %>%
+  performance(measure = "tpr", x.measure = "fpr")
+
+
+# Plot ROC curves for cv_model1,2 and 3 
+plot(perf1, col = "black", lty = 2)
+
+
+# ROC plot for training data
+roc( train_h2o$Failure.binary ~ m1_prob, plot=TRUE, legacy.axes=FALSE, 
+    percent=TRUE, col="black", lwd=2, print.auc=TRUE)
+
+
+
+# #Feature Interpretation
+# vip(cv_model3, num_features = 20)
+
+# Compute predicted probabilities on training data
+test_h2o=as.h2o(testdt)
+
+m2_prob <- predict(h2o_rf1, test_h2o, type = "prob")
+
+m2_prob=as.data.frame(m2_prob)[,2]
+
+test_h2o=as.data.frame(test_h2o)
+
+# Compute AUC metrics for cv_model1,2 and 3 
+perf2 <- prediction(m2_prob,test_h2o$Failure.binary) %>%
+  performance(measure = "tpr", x.measure = "fpr")
+
+
+# Plot ROC curves for cv_model1,2 and 3 
+plot(perf2, col = "black", lty = 2)
+
+
+# ROC plot for training data
+roc( test_h2o$Failure.binary ~ m2_prob, plot=TRUE, legacy.axes=FALSE, 
+    percent=TRUE, col="black", lwd=2, print.auc=TRUE)
+```
